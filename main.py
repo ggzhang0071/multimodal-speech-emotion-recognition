@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 import soundfile as sf
+from multiprocessing import Pool
 
 
 # Part 1: Extract Audio Labels
@@ -19,10 +20,10 @@ def extract_audio_labels():
 
     for sess in range(1, 6):
         emo_evaluation_dir = \
-            'data/IEMOCAP_full_release/Session{}/dialog/EmoEvaluation/'.format(sess)
+            '/git/datasets/IEMOCAP_full_release/Session{}/dialog/EmoEvaluation/'.format(sess)
         evaluation_files = [l for l in os.listdir(emo_evaluation_dir) if 'Ses' in l]
         for file in evaluation_files:
-            with open(emo_evaluation_dir + file) as f:
+            with open(emo_evaluation_dir + file,errors="replace") as f:
                 content = f.read()
             info_lines = re.findall(info_line, content)
             for line in info_lines[1:]:  # the first line is a header
@@ -57,36 +58,40 @@ def extract_audio_labels():
 # Part 2: Build Audio Vectors
 def build_audio_vectors():
     labels_df = pd.read_csv('data/pre-processed/df_iemocap.csv')
-    iemocap_dir = 'data/IEMOCAP_full_release/'
+    iemocap_dir = '/git/datasets/IEMOCAP_full_release/'
 
     sr = 44100
     audio_vectors = {}
     for sess in range(1, 6):  # using one session due to memory constraint, can replace [5] with range(1, 6)
-        wav_file_path = '{}Session{}/dialog/wav/'.format(iemocap_dir, sess)
-        orig_wav_files = os.listdir(wav_file_path)
-        for orig_wav_file in tqdm(orig_wav_files):
-            try:
-                orig_wav_vector, _sr = librosa.load(
-                        wav_file_path + orig_wav_file, sr=sr)
-                orig_wav_file, file_format = orig_wav_file.split('.')
-                for index, row in labels_df[labels_df['wav_file'].str.contains(
-                        orig_wav_file)].iterrows():
-                    start_time, end_time, truncated_wav_file_name, emotion,\
-                        val, act, dom = row['start_time'], row['end_time'],\
-                        row['wav_file'], row['emotion'], row['val'],\
-                        row['act'], row['dom']
-                    start_frame = math.floor(start_time * sr)
-                    end_frame = math.floor(end_time * sr)
-                    truncated_wav_vector = orig_wav_vector[start_frame:end_frame + 1]
-                    audio_vectors[truncated_wav_file_name] = truncated_wav_vector
-            except:
-                print('An exception occured for {}'.format(orig_wav_file))
-        with open('data/pre-processed/audio_vectors_{}.pkl'.format(sess), 'wb') as f:
-            pickle.dump(audio_vectors, f)
+        save_audio_vectors='data/pre-processed/audio_vectors_{}.pkl'.format(sess)
+        if os.path.exists(save_audio_vectors):
+            continue
+        else:
+            wav_file_path = '{}Session{}/dialog/wav/'.format(iemocap_dir, sess)
+            orig_wav_files = os.listdir(wav_file_path)
+            for orig_wav_file in tqdm(orig_wav_files):
+                try:
+                    orig_wav_vector, _sr = librosa.load(
+                            wav_file_path + orig_wav_file, sr=sr)
+                    orig_wav_file, file_format = orig_wav_file.split('.')
+                    for index, row in labels_df[labels_df['wav_file'].str.contains(
+                            orig_wav_file)].iterrows():
+                        start_time, end_time, truncated_wav_file_name, emotion,\
+                            val, act, dom = row['start_time'], row['end_time'],\
+                            row['wav_file'], row['emotion'], row['val'],\
+                            row['act'], row['dom']
+                        start_frame = math.floor(start_time * sr)
+                        end_frame = math.floor(end_time * sr)
+                        truncated_wav_vector = orig_wav_vector[start_frame:end_frame + 1]
+                        audio_vectors[truncated_wav_file_name] = truncated_wav_vector
+                except:
+                    print('An exception occured for {}'.format(orig_wav_file))
+            with open(save_audio_vectors_, 'wb') as f:
+                pickle.dump(audio_vectors, f)
 
 
 # Part 3: Extract Audio Features
-def extract_audio_features():
+def extract_audio_features(session):
     data_dir = 'data/pre-processed/'
     labels_df_path = '{}df_iemocap.csv'.format(data_dir)
     audio_vectors_path = '{}audio_vectors_1.pkl'.format(data_dir)
@@ -113,7 +118,7 @@ def extract_audio_features():
     audio_vectors_path = '{}audio_vectors_'.format(data_dir)
     labels_df = pd.read_csv(labels_path)
 
-    for sess in (range(1, 6)):
+    for sess in ([session]):
         audio_vectors = pickle.load(open('{}{}.pkl'.format(audio_vectors_path, sess), 'rb'))
         for index, row in tqdm(labels_df[labels_df['wav_file'].str.contains('Ses0{}'.format(sess))].iterrows()):
             try:
@@ -160,8 +165,8 @@ def extract_audio_features():
                     ignore_index=True)
             except:
                 print('Some exception occured')
+    df_features.to_csv('data/pre-processed/audio_features_{}.csv'.format(sess), index=False)
 
-    df_features.to_csv('data/pre-processed/audio_features.csv', index=False)
 
 
 def main():
@@ -170,7 +175,8 @@ def main():
     print('Part 2: Build Audio Vectors')
     build_audio_vectors()
     print('Part 3: Extract Audio Features')
-    extract_audio_features()
+    with Pool() as p:
+        p.map(extract_audio_features,range(1,6))
 
 
 if __name__ == '__main__':
